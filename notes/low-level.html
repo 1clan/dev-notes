@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Low-level programming / Dev Notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><a href="../index.html">Dev Notes</a></div>
+    <div class="brand-sub">Documentation</div>
+    <div class="nav-group">
+      <div class="nav-title">Notes</div>
+      <a href="index.html">Overview</a>
+      <a href="ffmpeg.html">FFmpeg codebase</a>
+      <a class="active" href="low-level.html">Low-level programming</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">On this page</div>
+      <a class="sub" href="#toolchain">Toolchain</a>
+      <a class="sub" href="#pointers">Pointers and C</a>
+      <a class="sub" href="#compilers">Compilers</a>
+      <a class="sub" href="#memory">Memory and allocators</a>
+      <a class="sub" href="#linux">Linux systems layer</a>
+      <a class="sub" href="#capstone">Capstone: mini-ffplay</a>
+      <a class="sub" href="#schedule">Four-week plan</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">Files</div>
+      <a href="../LowLevelRoadmap.pdf">Download PDF</a>
+      <a href="../LowLevelRoadmap.tex">LaTeX source</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <article>
+      <div class="breadcrumb"><a href="../index.html">Home</a> / <a href="index.html">Notes</a> / Low-level programming</div>
+      <h1>A Practical Path into Low-Level Programming</h1>
+      <p class="lede">Pointers, compilers, C, memory allocators &mdash; and a capstone that connects all of it to FFmpeg and SDL3.</p>
+
+      <h2 id="toolchain">Stage 0 &mdash; Toolchain</h2>
+<pre><code>sudo dnf install gcc make gdb strace ffmpeg-devel</code></pre>
+      <p><code>ffmpeg-devel</code> supplies the headers needed to compile against the libraries already installed. Compile <strong>every</strong> exercise like this:</p>
+<pre><code>gcc -std=c11 -Wall -Wextra -Wpedantic -g \
+    -fsanitize=address,undefined -o test test.c</code></pre>
+      <p>AddressSanitizer catches use-after-free, buffer overflows, double frees and leaks at runtime. It replaces most of what valgrind is used for; valgrind is not installed here, but gcc's sanitizers are.</p>
+
+      <h2 id="pointers">Stage 1 &mdash; Pointers and C itself</h2>
+      <p>The mental model that makes everything click:</p>
+      <ul>
+        <li>All memory is <strong>bytes with addresses</strong>. A pointer is an address plus a type that tells the compiler how many bytes to read or write.</li>
+        <li>An array is not a separate entity: <code>a[i]</code> is <code>*(a+i)</code>. Arrays decay to pointers when passed to functions.</li>
+        <li>A C string is a <code>char</code> array ending in a zero byte (NUL). There is no string type.</li>
+        <li><code>sizeof(p)</code> is the size of the pointer (8), not the pointee. Use <code>sizeof(*p)</code> for the latter.</li>
+        <li><code>void *</code> is a generic address; C converts it to and from any object pointer implicitly (unlike C++).</li>
+      </ul>
+
+      <h3>Exercises, in order</h3>
+      <ol>
+        <li><code>swap(int *a, int *b)</code> and print addresses with <code>printf("%p", (void*)p)</code>.</li>
+        <li>Reimplement <code>strlen</code>, <code>strcpy</code>, <code>strcat</code>, <code>strcmp</code> without using libc string functions.</li>
+        <li>A dynamic array: <code>struct Vec { void *data; size_t len, cap; }</code> with <code>vec_push()</code> built on <code>realloc()</code>.</li>
+        <li>A singly linked list with a <code>list_free()</code> that leaks nothing (verify with ASan).</li>
+      </ol>
+      <p>Draw boxes and arrows on paper for exercises 3 and 4. It is faster than staring at the code.</p>
+      <p>Recommended first book: <em>C Programming: A Modern Approach</em> by Knezek. Alternative: K&amp;R chapters 1&ndash;5 if you like terse classics.</p>
+
+      <h2 id="compilers">Stage 2 &mdash; What a compiler actually does</h2>
+      <p>Run each command on a tiny <code>hello.c</code> and inspect the output:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Command</th><th>What it shows</th></tr></thead>
+          <tbody>
+            <tr><td><code>gcc -E hello.c</code></td><td>Preprocessed source: macros and includes expanded</td></tr>
+            <tr><td><code>gcc -S hello.c</code></td><td>Generated assembly</td></tr>
+            <tr><td><code>gcc -c a.c -o a.o</code></td><td>Object file: machine code plus symbol table</td></tr>
+            <tr><td><code>nm a.o</code></td><td>Symbols defined and referenced</td></tr>
+            <tr><td><code>objdump -d a.o</code></td><td>Disassembly</td></tr>
+            <tr><td><code>readelf -h a.o</code></td><td>ELF headers</td></tr>
+            <tr><td><code>ar rcs libmine.a a.o b.o</code></td><td>Static library</td></tr>
+            <tr><td><code>gcc -v ...</code></td><td>Full pipeline: cpp &rarr; cc1 &rarr; as &rarr; ld</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Then split <code>pilot.c</code> into <code>pilot.c</code> and <code>pilot.h</code>, add include guards, and deliberately cause an <strong>undefined reference</strong> error and a <strong>multiple definition</strong> error. Learning to read those two messages saves hours later.</p>
+      <p>Use godbolt.org to compare <code>-O0</code> and <code>-O2</code> side by side. That is where pointers stop being abstract: <code>a[i]</code> becomes a base register plus an offset.</p>
+      <div class="callout">
+        <p>This is also the answer to "how does FFmpeg work": <code>libavcodec.so</code> is a pile of object files exporting symbols such as <code>avcodec_find_decoder</code>. VLC links against it and calls those symbols. No magic.</p>
+      </div>
+
+      <h2 id="memory">Stage 3 &mdash; Memory model and allocators</h2>
+<pre><code>high addresses
+ +----------------+
+ | stack          |  grows down: locals, return addresses
+ +----------------+
+ | (gap)          |
+ +----------------+
+ | heap           |  grows up: malloc / free / realloc
+ +----------------+
+ | .data / .bss   |  globals, static variables
+ +----------------+
+ | .text          |  machine code, read-only
+ +----------------+
+low addresses</code></pre>
+      <p>See your own version with <code>cat /proc/self/maps</code>.</p>
+      <h3>Key facts</h3>
+      <ul>
+        <li><code>malloc()</code> asks the OS for pages (<code>mmap</code>/<code>brk</code>) and carves them into chunks. It is not itself a syscall.</li>
+        <li><strong>Alignment</strong>: allocations are padded to 8 or 16 bytes. <code>(p + 15) &amp; ~15</code> rounds a pointer up to 16.</li>
+        <li><strong>Padding</strong>: <code>struct { char c; int x; }</code> is 8 bytes, not 5. Field order matters.</li>
+        <li><code>realloc()</code> may move your data; old pointers into that block become dangling.</li>
+        <li>Refcounting is how FFmpeg avoids copying frames: <code>AVFrame-&gt;buf[]</code> holds <code>AVBufferRef</code>s.</li>
+      </ul>
+      <h3>Allocator exercises</h3>
+      <ol>
+        <li><strong>Bump allocator</strong>: static <code>char arena[65536]</code>, a <code>bump_alloc()</code> that advances an offset with alignment. No free.</li>
+        <li><strong>Free-list allocator</strong>: a small header before each block (<code>size</code>, <code>next</code>), implement <code>my_free()</code>, then coalesce adjacent free blocks.</li>
+        <li><strong>Refcounted buffer</strong>: <code>struct Buf { void *data; size_t size; int *refs; }</code> with <code>buf_ref()</code> and <code>buf_unref()</code> &mdash; a miniature <code>AVBufferRef</code>.</li>
+        <li>Write buggy versions on purpose and watch ASan catch them.</li>
+      </ol>
+      <p>For the "why": <em>Computer Systems: A Programmer's Perspective</em> (CSAPP), chapters 2, 3, 5 and 6.</p>
+
+      <h2 id="linux">Stage 4 &mdash; The Linux systems layer</h2>
+      <p>Learn these calls and their man pages: <code>open/read/write/close</code>, <code>mmap</code>, <code>fork/exec/wait</code>, <code>pipe</code>, <code>pthread_create</code>, mutexes and atomics. Trace them with <code>strace -e trace=file ./app</code>.</p>
+      <p>Exercises: a 20-line <code>cat</code>; a <code>cp</code> implemented with <code>mmap</code>; a <code>fork()</code> plus <code>pipe()</code> pair; and a shared counter with and without a mutex so you can see the race.</p>
+      <p>Book: <em>Advanced Programming in the UNIX Environment</em> (APUE).</p>
+
+      <h2 id="capstone">Stage 5 &mdash; Capstone: your own mini-ffplay</h2>
+      <ol>
+        <li>After installing <code>ffmpeg-devel</code>, find the header location: <code>rpm -ql ffmpeg-devel | grep avcodec.h</code>.</li>
+        <li>Compile <code>doc/examples/demux_decode.c</code> from the FFmpeg source against those headers.</li>
+        <li>Instead of writing raw frames to a file, feed them into your <code>pilot.c</code> SDL3 texture.</li>
+        <li>Now you have demux &rarr; decode &rarr; scale &rarr; render: ffplay in miniature.</li>
+        <li>Bonus: route frame buffers through your own arena/refcount allocator.</li>
+      </ol>
+      <div class="callout green">
+        <p>Do not wait until you have "finished" all of this before touching FFmpeg. Do stages 1&ndash;3, then read <code>doc/examples/demux_decode.c</code> alongside stage 4. Keep one small program you own and add one layer at a time &mdash; which is exactly what <code>Pixels in C</code> already is.</p>
+      </div>
+
+      <h2 id="schedule">Four-week rhythm</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Week</th><th>Focus and deliverable</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Pointers, strings, gdb, warnings &mdash; string library plus <code>Vec</code></td></tr>
+            <tr><td>2</td><td>Preprocessor, assembly, objects, linking, Makefiles &mdash; multi-file build</td></tr>
+            <tr><td>3</td><td>Memory layout, ASan, custom allocators, padding &mdash; bump and free-list allocators</td></tr>
+            <tr><td>4</td><td>POSIX I/O, fork, threads, FFmpeg example &mdash; mini-player with SDL3</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="docs-footer"><a href="index.html">&larr; All notes</a> &middot; <a href="../LowLevelRoadmap.pdf">Download PDF</a></footer>
+    </article>
+  </main>
+</div>
+</body>
+</html>

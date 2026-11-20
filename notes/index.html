@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notes / Dev Notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><a href="../index.html">Dev Notes</a></div>
+    <div class="brand-sub">Documentation</div>
+    <div class="nav-group">
+      <div class="nav-title">Notes</div>
+      <a class="active" href="index.html">Overview</a>
+      <a href="ffmpeg.html">FFmpeg codebase</a>
+      <a href="low-level.html">Low-level programming</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">Files</div>
+      <a href="../FFmpegCodebase.pdf">FFmpeg PDF</a>
+      <a href="../LowLevelRoadmap.pdf">Roadmap PDF</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <article>
+      <div class="breadcrumb"><a href="../index.html">Home</a> / Notes</div>
+      <h1>Notes</h1>
+      <p class="lede">The written versions of both guides, here as browsable documentation. The PDFs remain available for downloading or printing.</p>
+
+      <div class="card-grid">
+        <section class="card">
+          <h3><a href="ffmpeg.html">The FFmpeg Codebase</a></h3>
+          <p>A tour of the library layout, the packet/frame data model, the demux to render pipeline, codec internals, configure flags and a reading order.</p>
+          <a href="ffmpeg.html">Read the notes &rarr;</a>
+        </section>
+        <section class="card">
+          <h3><a href="low-level.html">Low-Level Programming</a></h3>
+          <p>Pointers, the compilation pipeline, process memory, custom allocators, POSIX I/O and a capstone mini video player built from FFmpeg and SDL3.</p>
+          <a href="low-level.html">Read the notes &rarr;</a>
+        </section>
+      </div>
+
+      <h2>How these notes are organised</h2>
+      <p>Each page follows the same arc: a mental model first, then a map of the important pieces, then concrete exercises or a reading order. Code snippets are kept short so the shape of the system stays visible.</p>
+
+      <div class="callout green">
+        <p><strong>New to this?</strong> Start with <a href="low-level.html">Low-Level Programming</a> stages 1&ndash;3, then read the <a href="ffmpeg.html">FFmpeg notes</a>. The two are designed to meet in the middle at a small decode-and-render program.</p>
+      </div>
+    </article>
+
+    <footer class="docs-footer">Part of <a href="../index.html">Dev Notes</a>.</footer>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FFmpeg codebase / Dev Notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><a href="../index.html">Dev Notes</a></div>
+    <div class="brand-sub">Documentation</div>
+    <div class="nav-group">
+      <div class="nav-title">Notes</div>
+      <a href="index.html">Overview</a>
+      <a class="active" href="ffmpeg.html">FFmpeg codebase</a>
+      <a href="low-level.html">Low-level programming</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">On this page</div>
+      <a class="sub" href="#overview">One-sentence version</a>
+      <a class="sub" href="#layout">Repository layout</a>
+      <a class="sub" href="#types">Core types</a>
+      <a class="sub" href="#pipeline">Pipeline in code</a>
+      <a class="sub" href="#codecs">Inside a codec</a>
+      <a class="sub" href="#build">Build system</a>
+      <a class="sub" href="#reading">Reading order</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">Files</div>
+      <a href="../FFmpegCodebase.pdf">Download PDF</a>
+      <a href="../FFmpegCodebase.tex">LaTeX source</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <article>
+      <div class="breadcrumb"><a href="../index.html">Home</a> / <a href="index.html">Notes</a> / FFmpeg codebase</div>
+      <h1>The FFmpeg Codebase</h1>
+      <p class="lede">A guided tour of the libraries, the pipeline, the core structs, codec internals and where to start reading.</p>
+
+      <h2 id="overview">The one-sentence version</h2>
+      <p>FFmpeg is not really one program. It is a <strong>family of C libraries</strong> that implement a media pipeline, plus a few small command-line programs &mdash; <code>ffmpeg</code>, <code>ffprobe</code> and <code>ffplay</code> &mdash; that wire those libraries together.</p>
+
+<pre><code>file / URL / camera
+      |
+      v  libavformat     demux: identify the container, split out streams
+   AVPacket              compressed bytes
+      |
+      v  libavcodec      decode
+   AVFrame               raw pixels / raw samples
+      |
+      v  libavfilter     scale, crop, overlay, volume, subtitles
+   AVFrame
+      |
+      v  libavcodec      encode
+   AVPacket
+      |
+      v  libavformat     mux: write MP4 / MKV / TS
+   output file</code></pre>
+
+      <div class="callout">
+        <p>The usual early confusion: <strong>demuxing is not decoding</strong>, and <strong>encoding is not muxing</strong>. A demuxer pulls compressed packets out of a container; a decoder turns packets into raw frames. The encoder and muxer do the reverse.</p>
+      </div>
+
+      <h2 id="layout">Repository layout</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Directory</th><th>What lives there</th></tr></thead>
+          <tbody>
+            <tr><td><code>libavutil/</code></td><td>Foundation: <code>AVFrame</code>, <code>AVBufferRef</code>, <code>AVRational</code>, formats, math, logging</td></tr>
+            <tr><td><code>libavcodec/</code></td><td>Biggest directory. Decoders and encoders: <code>h264dec.c</code>, <code>hevc/</code>, <code>libx264.c</code>, <code>libx265.c</code>, bitstream readers, SIMD in <code>x86/</code></td></tr>
+            <tr><td><code>libavformat/</code></td><td>Demuxers, muxers and protocols: <code>mov.c</code>, <code>movenc.c</code>, <code>matroskadec.c</code>, <code>mpegts.c</code>, <code>http.c</code></td></tr>
+            <tr><td><code>libavfilter/</code></td><td>Filter graph engine plus filters: <code>vf_scale.c</code>, <code>vf_crop.c</code>, <code>af_volume.c</code></td></tr>
+            <tr><td><code>libswscale/</code></td><td>Pixel-format conversion and resizing: <code>sws_scale()</code></td></tr>
+            <tr><td><code>libswresample/</code></td><td>Audio conversion: <code>swr_convert()</code>, sample rate, channel layout</td></tr>
+            <tr><td><code>libavdevice/</code></td><td>Capture/output backends: <code>x11grab.c</code>, <code>v4l2.c</code>, <code>pulse.c</code></td></tr>
+            <tr><td><code>fftools/</code></td><td>The CLI programs: <code>ffmpeg.c</code>, <code>ffprobe.c</code>, <code>ffplay.c</code>, plus split-out demux/decode/filter/encode/mux files</td></tr>
+            <tr><td><code>configure</code></td><td>Custom configure script; generates <code>config.h</code> and <code>config.mak</code></td></tr>
+            <tr><td><code>ffbuild/</code></td><td>Make fragments used by the build</td></tr>
+            <tr><td><code>doc/examples/</code></td><td>Small complete example programs &mdash; the best entry point</td></tr>
+            <tr><td><code>tests/</code></td><td>FATE regression suite</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="types">The types you must know</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>AVFormatContext</code></td><td>One open input or output. Holds streams, duration, metadata, I/O context</td></tr>
+            <tr><td><code>AVStream</code></td><td>One track inside the file: codec id, size, sample rate, <code>time_base</code></td></tr>
+            <tr><td><code>AVCodecContext</code></td><td>Live codec state: negotiated dimensions, pixel format, quality, private options</td></tr>
+            <tr><td><code>AVPacket</code></td><td>Compressed chunk: <code>data</code>, <code>size</code>, <code>pts</code>, <code>dts</code>, <code>stream_index</code></td></tr>
+            <tr><td><code>AVFrame</code></td><td>Decoded raw data: video planes or audio samples, plus <code>pts</code> and format</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Two supporting ideas matter more than they look:</p>
+      <ul>
+        <li><code>AVRational time_base</code>: timestamps are integers interpreted in a per-stream fraction such as <code>{1, 90000}</code>. Many A/V sync bugs are timebase bugs.</li>
+        <li><code>AVBufferRef</code>: reference-counted memory. Packets and frames rarely copy pixels; they pass refs around. Mutating a frame you do not own is a classic mistake.</li>
+      </ul>
+
+      <h2 id="pipeline">Read the pipeline in code</h2>
+      <p>The skeleton of <code>doc/examples/demux_decode.c</code> looks like this:</p>
+<pre><code>avformat_open_input(&amp;fmt, "in.mkv", NULL, NULL);
+avformat_find_stream_info(fmt, NULL);
+
+for (each stream) {
+    const AVCodec *dec = avcodec_find_decoder(par-&gt;codec_id);
+    avcodec_alloc_context3(dec);
+    avcodec_parameters_to_context(dec_ctx, par);
+    avcodec_open2(dec_ctx, dec, NULL);
+}
+
+while (av_read_frame(fmt, &amp;pkt) &gt;= 0) {
+    avcodec_send_packet(dec_ctx, &amp;pkt);
+    while (avcodec_receive_frame(dec_ctx, frame) == 0) {
+        /* AVFrame: raw pixels/samples -- filters, then encoder */
+    }
+}</code></pre>
+      <p>Modern FFmpeg uses the send/receive API. Old tutorials that call <code>avcodec_decode_video2()</code> describe an API removed years ago.</p>
+
+      <h2 id="codecs">How one codec is implemented</h2>
+      <p>Take H.264 as an example:</p>
+      <ul>
+        <li><code>AVCodec</code> is a struct of function pointers: <code>init</code>, <code>decode</code>, <code>close</code>, <code>flush</code>, and capability flags.</li>
+        <li><code>AVCodecContext-&gt;priv_data</code> points to a codec-specific struct holding SPS/PPS, slice state and reference frames.</li>
+        <li>Bitstreams are read with <code>get_bits.h</code> helpers such as <code>get_bits()</code> and <code>show_bits()</code>, not byte-by-byte string logic.</li>
+        <li>Shared H.264/H.265 syntax lives in <code>h2645_parse.c</code>; H.265 has its own <code>libavcodec/hevc/</code> directory.</li>
+        <li>Hot loops have hand-written SIMD in <code>libavcodec/x86/</code> and <code>arm/</code> &mdash; hence the <code>_sse2</code>, <code>_avx2</code>, <code>_neon</code> variants chosen at runtime.</li>
+        <li>Third-party encoders are wrappers: <code>libx264.c</code>, <code>libx265.c</code>, <code>libvpxenc.c</code>, <code>libaomenc.c</code>. They exist only if configure found the external library.</li>
+      </ul>
+
+      <div class="callout green">
+        <p>That last point explains the VLC codec problem from earlier. Fedora's <code>ffmpeg-free</code> was configured with <code>--disable-decoder='h264,hevc,vc1,vvc'</code>, so <code>CONFIG_HEVC_DECODER</code> was zero and those <code>AVCodec</code> entries were never compiled in. VLC's <code>libavcodec_plugin.so</code> had no decoder for <code>avcodec_find_decoder()</code> to find. Installing the RPM Fusion build flipped those flags on.</p>
+      </div>
+
+      <h2 id="build">The build system</h2>
+      <p><code>./configure</code> probes the compiler and libraries, then generates <code>config.h</code>, <code>config.mak</code> and <code>ffbuild/config.mak</code>. Source files are full of guards such as <code>#if CONFIG_HEVC_DECODER</code>, and Makefiles pull in objects conditionally. That is why flags like <code>--enable-gpl</code>, <code>--enable-libx265</code> and <code>--enable-cuda</code> change the resulting binary.</p>
+      <p>Tests are FATE: reference clips plus expected hashes, described in <code>tests/fate/*.mak</code> and run with <code>make fate</code>.</p>
+
+      <h2 id="reading">Best reading order</h2>
+      <ol>
+        <li><code>doc/examples/demux_decode.c</code> and <code>doc/examples/transcode.c</code>: small, complete, no CLI noise.</li>
+        <li><code>libavformat/demux.c</code>: where <code>av_read_frame()</code> lives now.</li>
+        <li><code>libavcodec/decode.c</code> and <code>encode.c</code>: send/receive machinery and threading.</li>
+        <li><code>libavfilter/graphparser.c</code>: how a string such as <code>scale=1280:-1,eq=gamma=1.1</code> becomes a graph of filter nodes.</li>
+        <li>Only then <code>fftools/ffmpeg.c</code>, which is the full conductor and is harder to read cold, especially after the recent split into <code>ffmpeg_demux.c</code>, <code>ffmpeg_enc.c</code> and <code>ffmpeg_mux.c</code>.</li>
+      </ol>
+      <p>For exploration without reading C: <code>ffprobe -show_streams file.mkv</code>, <code>ffmpeg -decoders</code>, <code>ffmpeg -h encoder=libx265</code>, <code>ffmpeg -filters</code> and <code>ffmpeg -loglevel debug</code> are all useful.</p>
+
+      <footer class="docs-footer"><a href="index.html">&larr; All notes</a> &middot; <a href="../FFmpegCodebase.pdf">Download PDF</a></footer>
+    </article>
+  </main>
+</div>
+</body>
+</html>

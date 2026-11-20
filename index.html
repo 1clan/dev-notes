@@ -26,6 +26,9 @@
     header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2.5rem; }
     h1 { font-size: 2rem; margin: 0 0 .35rem; letter-spacing: -.02em; }
     header p { color: var(--muted); margin: 0; }
+    .topnav { margin-top: 1.1rem; }
+    .topnav a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .topnav a:hover { color: var(--accent-hover); text-decoration: underline; }
     .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
     .card {
       background: var(--card);
@@ -68,7 +71,10 @@
   <div class="wrap">
     <header>
       <h1>Dev Notes</h1>
-      <p>Two PDF guides: how the FFmpeg codebase fits together, and how to get into low-level C programming.</p>
+      <p>Guides on how the FFmpeg codebase fits together, and how to get into low-level C programming.</p>
+      <nav class="topnav">
+        <a href="notes/index.html">Read the notes online &rarr;</a>
+      </nav>
     </header>
 
     <main class="grid">
@@ -77,7 +83,8 @@
         <h2>The FFmpeg Codebase</h2>
         <p>A guided tour of the libraries, the demux/decode/filter/encode/mux pipeline, the core structs, codec internals, the build system and a suggested reading order.</p>
         <div class="links">
-          <a class="btn primary" href="FFmpegCodebase.pdf">Read PDF</a>
+          <a class="btn primary" href="notes/ffmpeg.html">Read online</a>
+          <a class="btn" href="FFmpegCodebase.pdf">PDF</a>
           <a class="btn" href="FFmpegCodebase.pdf" download>Download</a>
           <a class="btn" href="FFmpegCodebase.tex">LaTeX source</a>
         </div>
@@ -88,7 +95,8 @@
         <h2>Low-Level Programming</h2>
         <p>From pointers and the compilation pipeline to malloc, aligned allocators, POSIX system calls and a capstone mini-video-player built with FFmpeg and SDL3.</p>
         <div class="links">
-          <a class="btn primary" href="LowLevelRoadmap.pdf">Read PDF</a>
+          <a class="btn primary" href="notes/low-level.html">Read online</a>
+          <a class="btn" href="LowLevelRoadmap.pdf">PDF</a>
           <a class="btn" href="LowLevelRoadmap.pdf" download>Download</a>
           <a class="btn" href="LowLevelRoadmap.tex">LaTeX source</a>
         </div>
