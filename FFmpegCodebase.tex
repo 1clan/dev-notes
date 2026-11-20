@@ -1,0 +1,178 @@
+\documentclass[11pt]{article}
+\renewcommand{\labelitemi}{--}
+
+\begin{document}
+
+\title{The FFmpeg Codebase: A Guided Tour}
+\author{C libraries, pipes, packets and frames}
+\date{November 2026}
+\maketitle
+
+\section{The one-sentence version}
+
+FFmpeg is not really one program. It is a family of C libraries that implement
+a media pipeline, plus a few small command-line programs --- \verb|ffmpeg|,
+\verb|ffprobe| and \verb|ffplay| --- that wire those libraries together.
+
+\begin{verbatim}
+file / URL / camera
+      |
+      v  libavformat     demux: identify the container, split out streams
+   AVPacket              compressed bytes
+      |
+      v  libavcodec      decode
+   AVFrame               raw pixels / raw samples
+      |
+      v  libavfilter     scale, crop, overlay, volume, subtitles
+   AVFrame
+      |
+      v  libavcodec      encode
+   AVPacket
+      |
+      v  libavformat     mux: write MP4 / MKV / TS
+   output file
+\end{verbatim}
+
+The usual early confusion: demuxing is not decoding, and encoding is not
+muxing. A demuxer pulls compressed packets out of a container; a decoder turns
+packets into raw frames. The encoder and muxer do the reverse.
+
+\section{Repository layout}
+
+\bigskip
+
+\begin{center}
+\begin{tabular}{@{}p{0.26\textwidth} p{0.66\textwidth}@{}}
+\hline
+\textbf{Directory} & \textbf{What lives there} \\
+\hline
+\verb|libavutil/|    & Foundation: \verb|AVFrame|, \verb|AVBufferRef|, \verb|AVRational|, formats, math, logging \\
+\verb|libavcodec/|   & Biggest directory. Decoders/encoders: \verb|h264dec.c|, \verb|hevc/|, \verb|libx264.c|, \verb|libx265.c|, bitstream readers, SIMD in \verb|x86/| \\
+\verb|libavformat/|  & Demuxers/muxers and protocols: \verb|mov.c|, \verb|movenc.c|, \verb|matroskadec.c|, \verb|mpegts.c|, \verb|http.c| \\
+\verb|libavfilter/|  & Filter graph engine plus filters: \verb|vf_scale.c|, \verb|vf_crop.c|, \verb|af_volume.c| \\
+\verb|libswscale/|   & Pixel-format conversion and resizing: \verb|sws_scale()| \\
+\verb|libswresample/|& Audio conversion: \verb|swr_convert()|, sample rate, channel layout \\
+\verb|libavdevice/|  & Capture/output backends: \verb|x11grab.c|, \verb|v4l2.c|, \verb|pulse.c| \\
+\verb|fftools/|      & The CLI programs: \verb|ffmpeg.c|, \verb|ffprobe.c|, \verb|ffplay.c|, plus split-out demux/decode/filter/encode/mux files \\
+\verb|configure|     & Custom configure script; generates \verb|config.h| and \verb|config.mak| \\
+\verb|ffbuild/|      & Make fragments used by the build \\
+\verb|doc/examples/| & Small complete example programs --- the best entry point \\
+\verb|tests/|        & FATE regression suite \\
+\hline
+\end{tabular}
+\end{center}
+
+\section{The types you must know}
+
+\bigskip
+
+\begin{center}
+\begin{tabular}{@{}p{0.26\textwidth} p{0.66\textwidth}@{}}
+\hline
+\textbf{Type} & \textbf{Meaning} \\
+\hline
+\verb|AVFormatContext| & One open input or output. Holds streams, duration, metadata, I/O context \\
+\verb|AVStream|        & One track inside the file: codec id, size, sample rate, \verb|time_base| \\
+\verb|AVCodecContext|  & Live codec state: negotiated dimensions, pixel format, quality, private options \\
+\verb|AVPacket|        & Compressed chunk: \verb|data|, \verb|size|, \verb|pts|, \verb|dts|, \verb|stream_index| \\
+\verb|AVFrame|         & Decoded raw data: video planes or audio samples, plus \verb|pts| and format \\
+\hline
+\end{tabular}
+\end{center}
+
+Two supporting ideas matter more than they look:
+
+\begin{itemize}
+  \item \verb|AVRational time_base|: timestamps are integers interpreted in a
+        per-stream fraction such as \verb|{1, 90000}|. Many A/V sync bugs are
+        timebase bugs.
+  \item \verb|AVBufferRef|: reference-counted memory. Packets and frames rarely
+        copy pixels; they pass refs around. Mutating a frame you do not own is
+        a classic mistake.
+\end{itemize}
+
+\section{Read the pipeline in code}
+
+The skeleton of \verb|doc/examples/demux_decode.c| looks like this:
+
+\begin{verbatim}
+avformat_open_input(&fmt, "in.mkv", NULL, NULL);
+avformat_find_stream_info(fmt, NULL);
+
+for (each stream) {
+    const AVCodec *dec = avcodec_find_decoder(par->codec_id);
+    avcodec_alloc_context3(dec);
+    avcodec_parameters_to_context(dec_ctx, par);
+    avcodec_open2(dec_ctx, dec, NULL);
+}
+
+while (av_read_frame(fmt, &pkt) >= 0) {
+    avcodec_send_packet(dec_ctx, &pkt);
+    while (avcodec_receive_frame(dec_ctx, frame) == 0) {
+        /* AVFrame: raw pixels/samples -- filters, then encoder */
+    }
+}
+\end{verbatim}
+
+Modern FFmpeg uses the send/receive API. Old tutorials that call
+\verb|avcodec_decode_video2()| describe an API removed years ago.
+
+\section{How one codec is implemented}
+
+Take H.264 as an example:
+
+\begin{itemize}
+  \item \verb|AVCodec| is a struct of function pointers: \verb|init|,
+        \verb|decode|, \verb|close|, \verb|flush|, and capability flags.
+  \item \verb|AVCodecContext->priv_data| points to a codec-specific struct
+        holding SPS/PPS, slice state and reference frames.
+  \item Bitstreams are read with \verb|get_bits.h| helpers such as
+        \verb|get_bits()| and \verb|show_bits()|, not byte-by-byte string logic.
+  \item Shared H.264/H.265 syntax lives in \verb|h2645_parse.c|; H.265 has its
+        own \verb|libavcodec/hevc/| directory.
+  \item Hot loops have hand-written SIMD in \verb|libavcodec/x86/| and
+        \verb|arm/| --- hence the \verb|_sse2|, \verb|_avx2|, \verb|_neon|
+        variants chosen at runtime.
+  \item Third-party encoders are wrappers: \verb|libx264.c|, \verb|libx265.c|,
+        \verb|libvpxenc.c|, \verb|libaomenc.c|. They exist only if configure
+        found the external library.
+\end{itemize}
+
+That last point explains the VLC codec problem from earlier. Fedora's
+\verb|ffmpeg-free| was configured with
+\verb|--disable-decoder='h264,hevc,vc1,vvc'|, so \verb|CONFIG_HEVC_DECODER| was
+zero and those \verb|AVCodec| entries were never compiled in. VLC's
+\verb|libavcodec_plugin.so| had no decoder for \verb|avcodec_find_decoder()| to
+find. Installing the RPM Fusion build flipped those flags on.
+
+\section{The build system}
+
+\verb|./configure| probes the compiler and libraries, then generates
+\verb|config.h|, \verb|config.mak| and \verb|ffbuild/config.mak|. Source files
+are full of guards such as \verb|#if CONFIG_HEVC_DECODER|, and Makefiles pull
+in objects conditionally. That is why flags like \verb|--enable-gpl|,
+\verb|--enable-libx265| and \verb|--enable-cuda| change the resulting binary.
+
+Tests are FATE: reference clips plus expected hashes, described in
+\verb|tests/fate/*.mak| and run with \verb|make fate|.
+
+\section{Best reading order}
+
+\begin{enumerate}
+  \item \verb|doc/examples/demux_decode.c| and \verb|doc/examples/transcode.c|:
+        small, complete, no CLI noise.
+  \item \verb|libavformat/demux.c|: where \verb|av_read_frame()| lives now.
+  \item \verb|libavcodec/decode.c| and \verb|encode.c|: send/receive machinery
+        and threading.
+  \item \verb|libavfilter/graphparser.c|: how a string such as
+        \verb|scale=1280:-1,eq=gamma=1.1| becomes a graph of filter nodes.
+  \item Only then \verb|fftools/ffmpeg.c|, which is the full conductor and is
+        harder to read cold, especially after the recent split into
+        \verb|ffmpeg_demux.c|, \verb|ffmpeg_enc.c| and \verb|ffmpeg_mux.c|.
+\end{enumerate}
+
+For exploration without reading C: \verb|ffprobe -show_streams file.mkv|,
+\verb|ffmpeg -decoders|, \verb|ffmpeg -h encoder=libx265|, \verb|ffmpeg -filters|
+and \verb|ffmpeg -loglevel debug| are all useful.
+
+\end{document}

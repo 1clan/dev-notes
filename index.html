@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dev Notes</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --card: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #9198a1;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+    header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2.5rem; }
+    h1 { font-size: 2rem; margin: 0 0 .35rem; letter-spacing: -.02em; }
+    header p { color: var(--muted); margin: 0; }
+    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+    }
+    .tag {
+      align-self: flex-start;
+      font-size: .72rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .15rem .6rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 { font-size: 1.2rem; margin: 0 0 .5rem; }
+    .card p { color: var(--muted); margin: 0 0 1.25rem; flex: 1; }
+    .links { display: flex; gap: .6rem; flex-wrap: wrap; }
+    a.btn {
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .45rem .85rem;
+      font-size: .9rem;
+      color: var(--text);
+    }
+    a.btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1117; font-weight: 600; }
+    a.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    a.btn:hover { border-color: var(--accent); }
+    footer { margin-top: 3rem; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); padding-top: 1.25rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Dev Notes</h1>
+      <p>Two PDF guides: how the FFmpeg codebase fits together, and how to get into low-level C programming.</p>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <span class="tag">Architecture</span>
+        <h2>The FFmpeg Codebase</h2>
+        <p>A guided tour of the libraries, the demux/decode/filter/encode/mux pipeline, the core structs, codec internals, the build system and a suggested reading order.</p>
+        <div class="links">
+          <a class="btn primary" href="FFmpegCodebase.pdf">Read PDF</a>
+          <a class="btn" href="FFmpegCodebase.pdf" download>Download</a>
+          <a class="btn" href="FFmpegCodebase.tex">LaTeX source</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <span class="tag">Learning path</span>
+        <h2>Low-Level Programming</h2>
+        <p>From pointers and the compilation pipeline to malloc, aligned allocators, POSIX system calls and a capstone mini-video-player built with FFmpeg and SDL3.</p>
+        <div class="links">
+          <a class="btn primary" href="LowLevelRoadmap.pdf">Read PDF</a>
+          <a class="btn" href="LowLevelRoadmap.pdf" download>Download</a>
+          <a class="btn" href="LowLevelRoadmap.tex">LaTeX source</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Built with plain <code>pdflatex</code>. Hosted on GitHub Pages.
+    </footer>
+  </div>
+</body>
+</html>

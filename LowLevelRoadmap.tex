@@ -1,0 +1,232 @@
+\documentclass[11pt]{article}
+\renewcommand{\labelitemi}{--}
+
+% Self-contained: uses only environments from the LaTeX kernel
+% (verbatim, tabular, itemize, enumerate). No extra packages needed.
+
+\begin{document}
+
+\title{A Practical Path into Low-Level Programming}
+\author{Pointers / Compilers / C / Memory Allocators}
+\date{November 2026}
+\maketitle
+
+\section*{Overview}
+
+You already have the right setup: Fedora, gcc 16, gdb, and a small SDL3 project
+called \texttt{Pixels in C}. That project is the seed for the final exercise.
+The stages below go from raw pointers to a miniature video player built on
+FFmpeg and SDL.
+
+\bigskip
+
+\begin{center}
+\begin{tabular}{@{}p{0.28\textwidth} p{0.64\textwidth}@{}}
+\hline
+\textbf{Stage} & \textbf{Deliverable} \\
+\hline
+0. Toolchain      & Compiler, debugger, sanitizers, headers \\
+1. Pointers \& C  & String library, dynamic vector, linked list \\
+2. Compilers      & Multi-file build, understand objects and linking \\
+3. Memory         & Bump allocator, free-list allocator, refcounted buffer \\
+4. Linux systems  \texttt{cat}, \texttt{mmap} copy, \texttt{fork}/\texttt{pipe}, threads \\
+5. Capstone       & Mini-ffplay: FFmpeg decode --> SDL3 render \\
+\hline
+\end{tabular}
+\end{center}
+
+\section{Stage 0 --- Toolchain}
+
+\begin{verbatim}
+sudo dnf install gcc make gdb strace ffmpeg-devel
+\end{verbatim}
+
+\texttt{ffmpeg-devel} supplies the headers needed to compile against the
+libraries already installed. Compile every exercise like this:
+
+\begin{verbatim}
+gcc -std=c11 -Wall -Wextra -Wpedantic -g \
+    -fsanitize=address,undefined -o test test.c
+\end{verbatim}
+
+AddressSanitizer catches use-after-free, buffer overflows, double frees and
+leaks at runtime. It replaces most of what valgrind is used for; valgrind is
+not installed here, but gcc's sanitizers are.
+
+\section{Stage 1 --- Pointers and C itself}
+
+The mental model that makes everything click:
+
+\begin{itemize}
+  \item All memory is \textbf{bytes with addresses}. A pointer is an address
+        plus a type that tells the compiler how many bytes to read or write.
+  \item An array is not a separate entity: \texttt{a[i]} is \texttt{*(a+i)}.
+        Arrays decay to pointers when passed to functions.
+  \item A C string is a \texttt{char} array ending in a zero byte (NUL).
+        There is no string type.
+  \item \texttt{sizeof(p)} is the size of the pointer (8), not the pointee.
+        Use \texttt{sizeof(*p)} for the latter.
+  \item \texttt{void *} is a generic address; C converts it to and from any
+        object pointer implicitly (unlike C++).
+\end{itemize}
+
+Exercises, in order:
+
+\begin{enumerate}
+  \item \texttt{void swap(int *a, int *b)} and print addresses with
+        \texttt{printf("\%p", (void*)p)}.
+  \item Reimplement \texttt{strlen}, \texttt{strcpy}, \texttt{strcat},
+        \texttt{strcmp} without using libc string functions.
+  \item A dynamic array: \verb|struct Vec { void *data; size_t len, cap; }|
+        with \verb|vec_push()| built on \texttt{realloc()}.
+  \item A singly linked list with a \verb|list_free()| that leaks nothing
+        (verify with ASan).
+\end{enumerate}
+
+Draw boxes and arrows on paper for exercises 3 and 4. It is faster than
+staring at the code.
+
+Recommended first book: C Programming: A Modern Approach by Knezek.
+Alternative: K\&R chapters 1--5 if you like terse classics.
+
+\section{Stage 2 --- What a compiler actually does}
+
+Run each command on a tiny \texttt{hello.c} and inspect the output:
+
+\bigskip
+
+\begin{center}
+\begin{tabular}{@{}p{0.38\textwidth} p{0.54\textwidth}@{}}
+\hline
+\textbf{Command} & \textbf{What it shows} \\
+\hline
+\texttt{gcc -E hello.c}   & Preprocessed source: macros and includes expanded \\
+\texttt{gcc -S hello.c}   & Generated assembly \\
+\texttt{gcc -c a.c -o a.o}& Object file: machine code plus symbol table \\
+\texttt{nm a.o}           & Symbols defined and referenced \\
+\texttt{objdump -d a.o}   & Disassembly \\
+\texttt{readelf -h a.o}   & ELF headers \\
+\texttt{ar rcs libmine.a a.o b.o} & Static library \\
+\texttt{gcc -v ...}       & Full pipeline: cpp --> cc1 --> as --> ld \\
+\hline
+\end{tabular}
+\end{center}
+
+Then split \texttt{pilot.c} into \texttt{pilot.c} and \texttt{pilot.h}, add
+include guards, and deliberately cause an undefined reference error and
+a multiple definition error. Learning to read those two messages saves
+hours later.
+
+Use godbolt.org to compare \texttt{-O0} and \texttt{-O2} side by side. That is
+where pointers stop being abstract: \texttt{a[i]} becomes a base register plus
+an offset.
+
+This is also the answer to ``how does FFmpeg work'': \texttt{libavcodec.so} is
+a pile of object files exporting symbols such as \verb|avcodec_find_decoder|.
+VLC links against it and calls those symbols. No magic.
+
+\section{Stage 3 --- Memory model and allocators}
+
+Internalize the process layout:
+
+\begin{verbatim}
+high addresses
+ +----------------+
+ | stack          |  grows down: locals, return addresses
+ +----------------+
+ | (gap)          |
+ +----------------+
+ | heap           |  grows up: malloc / free / realloc
+ +----------------+
+ | .data / .bss   |  globals, static variables
+ +----------------+
+ | .text          |  machine code, read-only
+ +----------------+
+low addresses
+\end{verbatim}
+
+See your own version with \texttt{cat /proc/self/maps}.
+
+Key facts:
+
+\begin{itemize}
+  \item \texttt{malloc()} asks the OS for pages (\texttt{mmap}/\texttt{brk})
+        and carves them into chunks. It is not itself a syscall.
+  \item \textbf{Alignment}: allocations are padded to 8 or 16 bytes.
+        \verb|(p + 15) & ~15| rounds a pointer up to 16.
+  \item \textbf{Padding}: \verb|struct { char c; int x; }| is 8 bytes,
+        not 5. Field order matters.
+  \item \texttt{realloc()} may move your data; old pointers into that block
+        become dangling.
+  \item Refcounting is how FFmpeg avoids copying frames:
+        \texttt{AVFrame->buf[]} holds \texttt{AVBufferRef}s.
+\end{itemize}
+
+Allocator exercises:
+
+\begin{enumerate}
+  \item \textbf{Bump allocator}: static \texttt{char arena[65536]}, a
+        \verb|bump_alloc()| that advances an offset with alignment. No free.
+  \item \textbf{Free-list allocator}: a small header before each block
+        (\texttt{size}, \texttt{next}), implement \verb|my_free()|, then
+        coalesce adjacent free blocks.
+  \item \textbf{Refcounted buffer}: \verb|struct Buf { void *data; size_t size; int *refs; }|
+        with \verb|buf_ref()| and \verb|buf_unref()| ---
+        a miniature \texttt{AVBufferRef}.
+  \item Write buggy versions on purpose and watch ASan catch them.
+\end{enumerate}
+
+For the ``why'': Computer Systems: A Programmer's Perspective (CSAPP),
+chapters 2, 3, 5 and 6.
+
+\section{Stage 4 --- The Linux systems layer}
+
+Learn these calls and their man pages: \texttt{open/read/write/close},
+\texttt{mmap}, \texttt{fork/exec/wait}, \texttt{pipe}, \verb|pthread_create|,
+mutexes and atomics. Trace them with \texttt{strace -e trace=file ./app}.
+
+Exercises: a 20-line \texttt{cat}; a \texttt{cp} implemented with \texttt{mmap};
+a \texttt{fork()} plus \texttt{pipe()} pair; and a shared counter with and
+without a mutex so you can see the race.
+
+Book: Advanced Programming in the UNIX Environment (APUE).
+
+\section{Stage 5 --- Capstone: your own mini-ffplay}
+
+This ties everything together with what you already have:
+
+\begin{enumerate}
+  \item After installing \texttt{ffmpeg-devel}, find the header location:
+        \texttt{rpm -ql ffmpeg-devel | grep avcodec.h}.
+  \item Compile \verb|doc/examples/demux_decode.c| from the FFmpeg source
+        against those headers.
+  \item Instead of writing raw frames to a file, feed them into your
+        \texttt{pilot.c} SDL3 texture.
+  \item Now you have demux --> decode --> scale --> render: ffplay in
+        miniature.
+  \item Bonus: route frame buffers through your own arena/refcount allocator.
+\end{enumerate}
+
+Do not wait until you have ``finished'' all of this before touching FFmpeg.
+Do stages 1--3, then read \verb|doc/examples/demux_decode.c| alongside
+stage 4. Keep one small program you own and add one layer at a time --- which
+is exactly what \texttt{Pixels in C} already is.
+
+\section{Four-week rhythm}
+
+\bigskip
+
+\begin{center}
+\begin{tabular}{@{}p{0.12\textwidth} p{0.80\textwidth}@{}}
+\hline
+\textbf{Week} & \textbf{Focus and deliverable} \\
+\hline
+1 & Pointers, strings, gdb, warnings --- string library plus \texttt{Vec} \\
+2 & Preprocessor, assembly, objects, linking, Makefiles --- multi-file build \\
+3 & Memory layout, ASan, custom allocators, padding --- bump and free-list allocators \\
+4 & POSIX I/O, fork, threads, FFmpeg example --- mini-player with SDL3 \\
+\hline
+\end{tabular}
+\end{center}
+
+\end{document}
